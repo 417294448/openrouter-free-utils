@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>OpenRouterClient Demo</title>
+<style>
+  body { font-family: monospace; max-width: 640px; margin: 40px auto; padding: 0 16px; background: #111; color: #ccc; }
+  input, button { font-family: monospace; font-size: 14px; padding: 6px 10px; border-radius: 4px; border: 1px solid #444; background: #222; color: #ccc; }
+  input { width: 100%; box-sizing: border-box; margin-bottom: 8px; }
+  button { cursor: pointer; background: #1a3a5f; border-color: #4a9eff; color: #4a9eff; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  pre { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 4px; padding: 12px; white-space: pre-wrap; word-break: break-all; font-size: 13px; margin-top: 12px; }
+  .ok  { color: #4caf50; }
+  .err { color: #f44336; }
+  .dim { color: #555; }
+</style>
+</head>
+<body>
+
+<h3 style="color:#888;margin-bottom:16px">OpenRouterClient — full demo</h3>
+
+<input id="apiKey" placeholder="sk-or-v1-..." />
+<button id="run">Run</button>
+
+<pre id="log"><span class="dim">// output will appear here</span></pre>
+
+<script src="openrouter-client.js"></script>
+<script>
+const $apiKey = document.getElementById('apiKey');
+const $run    = document.getElementById('run');
+const $log    = document.getElementById('log');
+
+const savedKey = localStorage.getItem('or_apikey');
+if (savedKey) $apiKey.value = savedKey;
+
+function log(line, cls = '') {
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = line + '\n';
+  $log.appendChild(span);
+  $log.scrollTop = $log.scrollHeight;
+}
+
+// Append text inline (no newline) — used for streaming demo
+function logInline(text, cls = '') {
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = text;
+  $log.appendChild(span);
+  $log.scrollTop = $log.scrollHeight;
+}
+
+$run.addEventListener('click', async () => {
+  const key = $apiKey.value.trim();
+  if (!key) { alert('请填写 API Key'); return; }
+  localStorage.setItem('or_apikey', key);
+
+  $log.textContent = '';
+  $run.disabled = true;
+
+  // ── 1. 初始化 ────────────────────────────────────────────
+  // persistKey: 统计数据持久化到 localStorage，刷新页面后自动恢复
+  // timeoutMs:  单次模型请求超时(ms)，超时后该模型冷却，自动切换下一个
+  // maxRetries: 一次 send/sendStream 最多切换模型次数
+  const client = new OpenRouterClient({
+    timeoutMs: 15_000,
+    maxRetries: 10,
+    persistKey: 'or_demo_perf',
+    onModelSwitch: (attempt, max, modelId, reason) =>
+      log(`  [${attempt}/${max}] 切换模型，原因: ${reason} (${modelId.split('/').pop()})`, 'err'),
+  });
+
+  // ── 2. 加载模型 ───────────────────────────────────────────
+  log('① client.loadModels(apiKey)');
+  try {
+    const models = await client.loadModels(key);
+    log(`   → 加载成功，共 ${models.length} 个免费模型`, 'ok');
+    log(`   → 前3个: ${models.slice(0, 3).map(m => m.id).join(', ')}`, 'dim');
+  } catch (e) {
+    log(`   → 失败: ${e.message}`, 'err');
+    $run.disabled = false;
+    return;
+  }
+
+  // ── 3. 非流式请求（send） ─────────────────────────────────
+  // send() 内部调用 sendStream() 并收集完整结果
+  // 支持 temperature/max_tokens 等参数透传到 OpenRouter API
+  // elapsedMs 为本次成功请求耗时（不含重试累计时间）
+  const messages = [{ role: 'user', content: '用一句话介绍你自己。' }];
+  log('\n② client.send(messages)  — 非流式');
+  try {
+    const { content, modelId, elapsedMs } = await client.send(messages);
+    log(`   → 模型: ${modelId}`, 'ok');
+    log(`   → 耗时: ${(elapsedMs / 1000).toFixed(2)}s`, 'ok');
+    log(`   → 回复: ${content.slice(0, 200)}`, 'ok');
+  } catch (e) {
+    log(`   → 失败: ${e.message}`, 'err');
+    $run.disabled = false;
+    return;
+  }
+
+  // ── 4. 流式请求（sendStream） ─────────────────────────────
+  // sendStream() 返回 AsyncGenerator，逐 token 产出 { delta, modelId }
+  // 最终产出 { done: true, content, modelId, elapsedMs }
+  // 失败自动重试（与 send() 相同的重试逻辑）
+  // 等待 2s 避免连续请求触发免费模型限速
+  await new Promise(r => setTimeout(r, 2000));
+  const streamMessages = [{ role: 'user', content: '用一句话说一个冷笑话。' }];
+  log('\n③ client.sendStream(messages)  — 流式');
+  logInline('   → 流式输出: ', 'dim');
+  try {
+    let streamModel = '', streamMs = 0;
+    for await (const chunk of client.sendStream(streamMessages)) {
+      if (chunk.done) {
+        streamModel = chunk.modelId;
+        streamMs = chunk.elapsedMs;
+      } else {
+        logInline(chunk.delta, 'ok');
+      }
+    }
+    log('');
+    log(`   → 模型: ${streamModel}`, 'ok');
+    log(`   → 耗时: ${(streamMs / 1000).toFixed(2)}s`, 'ok');
+  } catch (e) {
+    log(`\n   → 流式失败: ${e.message}`, 'err');
+  }
+
+  // ── 5. AbortSignal 取消演示 ───────────────────────────────
+  // send/sendStream 支持外部 AbortSignal，取消后立即终止（不产生僵尸请求）
+  // 常用于总超时控制或用户手动取消
+  log('\n④ AbortSignal 取消演示');
+  const abortCtrl = new AbortController();
+  setTimeout(() => abortCtrl.abort(), 100); // 100ms 后取消
+  try {
+    await client.send(
+      [{ role: 'user', content: '这条消息会被取消。' }],
+      { signal: abortCtrl.signal },
+    );
+    log('   → 请求意外完成（未被取消）', 'dim');
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      log('   → 已被 AbortSignal 正确取消 ✓', 'ok');
+    } else {
+      log(`   → 错误: ${e.message}`, 'err');
+    }
+  }
+
+  // ── 6. 查询统计 ───────────────────────────────────────────
+  // getAllModelStats(): 各模型性能统计（时间衰减加权 + UCB 探索奖励评分）
+  log('\n⑤ client.getAllModelStats() — 有数据的模型');
+  const modelStats = client.getAllModelStats().filter(x => x.stats);
+  if (modelStats.length === 0) {
+    log('   → (暂无数据)', 'dim');
+  } else {
+    modelStats.forEach(({ modelId, stats, score }) =>
+      log(`   ${modelId.split('/').pop().padEnd(36)} avg=${stats.avgMs != null ? (stats.avgMs/1000).toFixed(2)+'s' : '-'} ok=${(stats.successRate*100).toFixed(0)}% score=${score.toFixed(2)}`, 'dim')
+    );
+  }
+
+  // getAllProviderStats(): 各 provider 聚合统计（含限速状态）
+  log('\n⑥ client.getAllProviderStats() — 各 provider');
+  client.getAllProviderStats().forEach(p =>
+    log(`   ${p.provider.padEnd(26)} models=${p.totalModels} reqs=${p.totalRequests} rateLimited=${p.isRateLimited}`, 'dim')
+  );
+
+  log('\n✓ 全部验证完成', 'ok');
+  $run.disabled = false;
+});
+</script>
+</body>
+</html>
