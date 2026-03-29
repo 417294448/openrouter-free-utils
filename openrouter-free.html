@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenRouter Free Model Chat</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+
+  header { padding: 12px 20px; background: #1a1a1a; border-bottom: 1px solid #2a2a2a; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; font-weight: 600; color: #fff; flex-shrink: 0; }
+  .config-row { display: flex; gap: 8px; align-items: center; flex: 1; flex-wrap: wrap; }
+
+  input[type="text"], input[type="number"], select {
+    background: #2a2a2a; border: 1px solid #3a3a3a; color: #e0e0e0;
+    padding: 6px 10px; border-radius: 6px; font-size: 13px; outline: none;
+  }
+  input[type="text"]:focus, input[type="number"]:focus { border-color: #555; }
+  #apiKey { width: 220px; }
+  #timeout { width: 70px; }
+  #modelSelect { flex: 1; min-width: 160px; max-width: 300px; }
+
+  button { padding: 6px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.15s; }
+  .btn-primary   { background: #4a9eff; color: #fff; }
+  .btn-primary:hover  { background: #3a8eef; }
+  .btn-secondary { background: #2a2a2a; color: #ccc; border: 1px solid #3a3a3a; }
+  .btn-secondary:hover { background: #333; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; flex-shrink: 0; }
+  .status-dot.ok      { background: #4caf50; }
+  .status-dot.err     { background: #f44336; }
+  .status-dot.loading { background: #ff9800; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  #statusText { font-size: 12px; color: #888; }
+
+  #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 75%; padding: 10px 14px; border-radius: 10px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .msg.user      { background: #1e3a5f; align-self: flex-end; border-bottom-right-radius: 2px; }
+  .msg.assistant { background: #1e1e1e; align-self: flex-start; border-bottom-left-radius: 2px; border: 1px solid #2a2a2a; }
+  .msg.system    { background: transparent; border: 1px dashed #333; color: #666; font-size: 12px; align-self: center; text-align: center; max-width: 100%; }
+  .msg-meta { font-size: 11px; color: #555; margin-top: 4px; }
+
+  footer { padding: 12px 20px; background: #1a1a1a; border-top: 1px solid #2a2a2a; display: flex; gap: 8px; }
+  #userInput { flex: 1; background: #2a2a2a; border: 1px solid #3a3a3a; color: #e0e0e0; padding: 10px 14px; border-radius: 8px; font-size: 14px; outline: none; resize: none; height: 44px; max-height: 120px; overflow-y: auto; font-family: inherit; }
+  #userInput:focus { border-color: #555; }
+
+  .blacklist-badge { display: inline-block; background: #3a1e1e; color: #f44336; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+  .speed-badge     { display: inline-block; background: #1a2a3a; color: #4a9eff; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+  #modelInfo { font-size: 11px; color: #666; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+  .thinking { color: #666; font-style: italic; }
+  .thinking::after { content: '▋'; animation: blink 0.7s infinite; }
+  .msg.assistant.streaming::after { content: '▋'; animation: blink 0.7s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* ── Markdown rendered messages ── */
+  .msg.md-rendered { white-space: normal; }
+  .msg.md-rendered p { margin: 0 0 0.5em; }
+  .msg.md-rendered p:last-child { margin-bottom: 0; }
+  .msg.md-rendered h3, .msg.md-rendered h4, .msg.md-rendered h5 { color: #fff; margin: 0.8em 0 0.3em; font-size: 1em; }
+  .msg.md-rendered h3 { font-size: 1.15em; }
+  .msg.md-rendered ul, .msg.md-rendered ol { padding-left: 1.4em; margin: 0.3em 0 0.5em; }
+  .msg.md-rendered li { margin: 0.15em 0; }
+  .msg.md-rendered pre { background: #111; border: 1px solid #2a2a2a; border-radius: 6px; padding: 10px 12px; margin: 0.5em 0; overflow-x: auto; white-space: pre; font-family: monospace; font-size: 12px; line-height: 1.5; color: #aaa; }
+  .msg.md-rendered code.md-inline { background: #2a2a2a; border-radius: 3px; padding: 1px 5px; font-family: monospace; font-size: 0.9em; color: #ccc; }
+  .msg.md-rendered strong { color: #fff; font-weight: 600; }
+  .msg.md-rendered em { color: #bbb; }
+  .msg.md-rendered a { color: #4a9eff; text-decoration: none; }
+  .msg.md-rendered a:hover { text-decoration: underline; }
+  .msg.md-rendered blockquote { border-left: 3px solid #3a3a3a; padding-left: 10px; margin: 0.4em 0; color: #888; }
+  .msg.md-rendered hr { border: none; border-top: 1px solid #2a2a2a; margin: 0.6em 0; }
+
+  /* ── Stats panel ── */
+  #statsOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 100; }
+  #statsPanel {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: #1a1a1a; border: 1px solid #333; border-radius: 10px;
+    padding: 16px 20px; z-index: 101; width: min(750px, 96vw); max-height: 80vh; overflow-y: auto;
+  }
+  #statsPanel h3 { font-size: 14px; color: #ccc; margin-bottom: 12px; }
+  .btn-close { float: right; font-size: 20px; line-height: 1; color: #555; cursor: pointer; background: none; border: none; padding: 0; margin-top: -2px; }
+  .btn-close:hover { color: #ccc; }
+
+  .stats-tabs { display: flex; margin-bottom: 12px; border-bottom: 1px solid #2a2a2a; }
+  .stats-tab { padding: 5px 14px; font-size: 12px; cursor: pointer; color: #555; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .stats-tab:hover { color: #aaa; }
+  .stats-tab.active { color: #ccc; border-bottom-color: #4a9eff; }
+
+  .stats-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .stats-table th { text-align: left; padding: 6px 8px; color: #555; border-bottom: 1px solid #2a2a2a; font-weight: normal; white-space: nowrap; }
+  .stats-table td { padding: 5px 8px; border-bottom: 1px solid #1e1e1e; }
+  .stats-table tr:hover td { background: #222; }
+  .score-bar-wrap { display: inline-flex; align-items: center; gap: 5px; }
+  .score-bar { display: inline-block; height: 6px; border-radius: 3px; background: #4a9eff; min-width: 2px; }
+
+  .provider-hdr td { background: #1f1f1f; color: #bbb; font-weight: 600; border-bottom: 1px solid #2a2a2a; border-top: 2px solid #252525; }
+  .model-sub td { padding-top: 4px; padding-bottom: 4px; padding-left: 22px; font-size: 11px; border-bottom: 1px solid #181818; }
+  .model-sub:hover td { background: #1c1c1c; }
+
+  .stats-note { margin-top: 10px; font-size: 11px; color: #444; }
+
+  /* ── Help panel ── */
+  #helpPanel {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: #1a1a1a; border: 1px solid #333; border-radius: 10px;
+    padding: 16px 20px; z-index: 101; width: min(680px, 96vw); max-height: 80vh; overflow-y: auto;
+  }
+  #helpPanel h3 { font-size: 14px; color: #ccc; margin-bottom: 14px; }
+  .help-section { margin-bottom: 14px; }
+  .help-section h4 { font-size: 12px; color: #4a9eff; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .help-section p, .help-section li { font-size: 12px; color: #888; line-height: 1.7; }
+  .help-section ul { padding-left: 16px; }
+  .help-section code { background: #2a2a2a; border-radius: 3px; padding: 1px 5px; font-family: monospace; font-size: 11px; color: #ccc; }
+  .help-section pre { background: #111; border: 1px solid #2a2a2a; border-radius: 5px; padding: 10px 12px; font-family: monospace; font-size: 11px; color: #aaa; line-height: 1.65; overflow-x: auto; margin: 6px 0 0; white-space: pre; }
+  .help-section pre .cm { color: #555; }
+  .help-section pre .kw { color: #c792ea; }
+  .help-section pre .fn { color: #82aaff; }
+  .help-section pre .st { color: #c3e88d; }
+  .help-section pre .nm { color: #f78c6c; }
+  .help-divider { border: none; border-top: 1px solid #252525; margin: 12px 0; }
+  .help-demo-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 7px 14px; background: #1a2a3a; border: 1px solid #2a4060; border-radius: 6px; color: #4a9eff; font-size: 12px; text-decoration: none; }
+  .help-demo-link:hover { background: #1e3550; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>OpenRouter Free</h1>
+  <div class="config-row">
+    <input type="text" id="apiKey" placeholder="sk-or-v1-..." />
+    <button class="btn-secondary" id="loadModels">加载模型</button>
+    <select id="modelSelect"><option value="auto">自动（按性能）</option></select>
+    <label style="font-size:13px;color:#888">模型(s)</label>
+    <input type="number" id="timeout" value="5" min="1" max="120" />
+    <label style="font-size:13px;color:#888">总计(s)</label>
+    <input type="number" id="totalTimeout" value="60" min="1" max="600" style="width:60px" />
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">未连接</span>
+    <button class="btn-secondary" id="statsBtn" style="padding:5px 10px;font-size:12px">📊 统计</button>
+    <button class="btn-secondary" id="helpBtn" style="padding:5px 10px;font-size:12px;margin-left:auto">？ 帮助</button>
+  </div>
+</header>
+
+<div id="chat">
+  <div class="msg system">输入 API Key 后点击「加载模型」，然后开始对话。<br>策略：优先选择近1小时响应最快的模型，综合考虑成功率与速率压力，失败自动切换。</div>
+</div>
+
+<div style="padding:4px 20px;background:#1a1a1a;border-top:1px solid #1e1e1e;">
+  <div id="modelInfo">-</div>
+</div>
+
+<footer>
+  <textarea id="userInput" placeholder="输入消息，Enter 发送，Shift+Enter 换行..." rows="1"></textarea>
+  <button class="btn-primary" id="sendBtn" disabled>发送</button>
+</footer>
+
+<div id="statsOverlay"></div>
+<div id="helpPanel">
+  <button class="btn-close" id="helpClose">×</button>
+  <h3>使用帮助</h3>
+
+  <div class="help-section">
+    <h4>快速开始</h4>
+    <ul>
+      <li>前往 <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" style="color:#4a9eff">openrouter.ai/keys</a> 注册并创建 API Key（免费）</li>
+      <li>将 Key 粘贴到输入框，点击「加载模型」</li>
+      <li>加载成功后即可在输入框发送消息</li>
+    </ul>
+  </div>
+
+  <hr class="help-divider">
+
+  <div class="help-section">
+    <h4>模型选择</h4>
+    <ul>
+      <li><b style="color:#ccc">自动（按性能）</b>：系统根据近1小时滑动窗口统计，优先选择响应最快、成功率最高、速率压力最小的模型，失败后自动切换到下一个</li>
+      <li><b style="color:#ccc">手动指定</b>：从下拉列表选择特定模型，仅使用该模型（不自动切换）</li>
+    </ul>
+  </div>
+
+  <hr class="help-divider">
+
+  <div class="help-section">
+    <h4>超时设置</h4>
+    <ul>
+      <li><b style="color:#ccc">模型(s)</b>：单次模型请求的超时。超时后该模型进入冷却，自动切换到下一个模型重试。免费模型响应较慢，建议设置 <code>15~30s</code>。</li>
+      <li><b style="color:#ccc">总计(s)</b>：一条用户消息的整体最长等待时间（含所有重试）。超过后立即终止并提示「请求超时」，不再继续切换模型。建议设置为模型超时的 <code>3~5 倍</code>。</li>
+    </ul>
+  </div>
+
+  <hr class="help-divider">
+
+  <div class="help-section">
+    <h4>键盘快捷键</h4>
+    <ul>
+      <li><code>Enter</code> — 发送消息</li>
+      <li><code>Shift + Enter</code> — 换行</li>
+    </ul>
+  </div>
+
+  <hr class="help-divider">
+
+  <div class="help-section">
+    <h4>📊 统计面板说明</h4>
+    <ul>
+      <li><b style="color:#ccc">请求数</b>：近1小时内该模型被调用次数</li>
+      <li><b style="color:#ccc">平均响应</b>：近1小时成功请求的加权平均耗时（近期数据权重更高，15分钟半衰期）</li>
+      <li><b style="color:#ccc">成功率</b>：时间衰减加权的成功比例（绿&gt;80%，橙&gt;50%，红≤50%）</li>
+      <li><b style="color:#ccc">速率/min</b>：近1分钟请求数 / 预估上限，接近上限时降低该模型优先级</li>
+      <li><b style="color:#ccc">综合评分</b>：成功率 × 速度加成 × 速率余量 × Provider惩罚 + UCB探索奖励</li>
+      <li><b style="color:#ccc">冷却中</b>：失败后按错误严重程度分级冷却（超时30s → 常规60s → 限速120s → 不可用180s），倒计时结束后恢复</li>
+    </ul>
+  </div>
+
+  <hr class="help-divider">
+
+  <div class="help-section">
+    <h4>常见问题</h4>
+    <ul>
+      <li><b style="color:#ccc">加载模型失败</b>：检查 API Key 是否正确，或网络是否能访问 openrouter.ai</li>
+      <li><b style="color:#ccc">所有模型都失败</b>：免费模型有并发限制，稍等片刻后重试，或增大超时时间</li>
+      <li><b style="color:#ccc">响应很慢</b>：免费模型共享算力，高峰期延迟较高，可在统计面板查看当前最快的模型并手动选择</li>
+    </ul>
+  </div>
+
+  <hr class="help-divider">
+
+  <div class="help-section">
+    <h4>📦 openrouter-client.js 使用方法</h4>
+    <p>在页面引入脚本后即可直接使用 <code>OpenRouterClient</code> 类，无需安装任何依赖。支持 CJS <code>require()</code> 导入，TypeScript 类型定义见 <code>openrouter-client.d.ts</code>。</p>
+    <pre><span class="cm">// 浏览器</span>
+<span class="kw">&lt;script</span> src=<span class="st">"openrouter-client.js"</span><span class="kw">&gt;&lt;/script&gt;</span>
+<span class="cm">// Node.js / CJS</span>
+<span class="kw">const</span> OpenRouterClient = <span class="fn">require</span>(<span class="st">'./openrouter-client'</span>);
+<span class="cm">// ESM (side-effect import)</span>
+<span class="kw">import</span> <span class="st">'./openrouter-client.js'</span>;
+<span class="kw">const</span> { OpenRouterClient } = globalThis;</pre>
+
+    <p style="margin-top:10px"><b style="color:#ccc">构造函数</b></p>
+    <pre><span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">OpenRouterClient</span>({
+  timeoutMs:     <span class="nm">20000</span>,   <span class="cm">// 单次模型请求超时(ms)，默认 20000</span>
+  maxRetries:    <span class="nm">10</span>,      <span class="cm">// 最多切换模型次数，默认 10</span>
+  persistKey:    <span class="st">'or_perf'</span>, <span class="cm">// localStorage 持久化 key（null=不持久化）</span>
+  debug:         <span class="kw">false</span>,   <span class="cm">// 开启 console.debug 诊断输出</span>
+  onModelSwitch: (attempt, max, failedModelId, reason) =&gt; {
+    console.<span class="fn">log</span>(<span class="st">`[${attempt}/${max}] 切换，原因: ${reason}`</span>);
+  },
+});</pre>
+
+    <p style="margin-top:10px"><b style="color:#ccc">事件系统</b> — 可观测性钩子</p>
+    <pre>client.<span class="fn">on</span>(<span class="st">'request:start'</span>,   ({ modelId, attempt }) =&gt; { ... });
+client.<span class="fn">on</span>(<span class="st">'request:success'</span>, ({ modelId, elapsedMs }) =&gt; { ... });
+client.<span class="fn">on</span>(<span class="st">'request:error'</span>,   ({ modelId, error, willRetry }) =&gt; { ... });
+client.<span class="fn">on</span>(<span class="st">'model:blacklist'</span>, ({ modelId, reason, duration }) =&gt; { ... });
+client.<span class="fn">on</span>(<span class="st">'model:release'</span>,   ({ modelId }) =&gt; { ... });
+client.<span class="fn">off</span>(<span class="st">'request:error'</span>, fn); <span class="cm">// 取消订阅</span></pre>
+
+    <p style="margin-top:10px"><b style="color:#ccc">loadModels(apiKey, options?)</b> — 加载免费模型列表（自动重试）</p>
+    <pre><span class="kw">const</span> models = <span class="kw">await</span> client.<span class="fn">loadModels</span>(<span class="st">'sk-or-v1-...'</span>, {
+  retries:   <span class="nm">3</span>,    <span class="cm">// 最多重试次数，默认 3</span>
+  backoffMs: <span class="nm">1000</span>, <span class="cm">// 初始退避(ms)，每次翻倍，默认 1000</span>
+});
+<span class="cm">// 返回: Array&lt;{ id: string, ... }&gt;  按 id 字母排序</span>
+
+<span class="cm">// 用已存储的 key 重新加载：</span>
+<span class="kw">await</span> client.<span class="fn">refreshModels</span>();</pre>
+
+    <p style="margin-top:10px"><b style="color:#ccc">send(messages, options)</b> — 非流式请求</p>
+    <pre><span class="kw">const</span> { content, modelId, elapsedMs, totalElapsedMs } = <span class="kw">await</span> client.<span class="fn">send</span>(
+  [{ role: <span class="st">'user'</span>, content: <span class="st">'你好'</span> }],
+  {
+    preferredModelId: <span class="kw">null</span>,    <span class="cm">// null=自动选模型</span>
+    signal: controller.signal, <span class="cm">// 可选，AbortSignal 用于取消</span>
+    temperature: <span class="nm">0.7</span>,          <span class="cm">// 可选，透传任何 OpenRouter API 参数</span>
+    max_tokens: <span class="nm">1024</span>,
+  }
+);
+<span class="cm">// elapsedMs: 成功模型的耗时  totalElapsedMs: 含重试的总耗时</span></pre>
+
+    <p style="margin-top:10px"><b style="color:#ccc">sendStream(messages, options)</b> — 流式请求（AsyncGenerator）</p>
+    <pre><span class="kw">for await</span> (<span class="kw">const</span> chunk <span class="kw">of</span> client.<span class="fn">sendStream</span>(messages, { signal })) {
+  <span class="kw">if</span> (chunk.done) {
+    <span class="cm">// 流结束: { done, content, modelId, elapsedMs }</span>
+    console.<span class="fn">log</span>(chunk.content);
+  } <span class="kw">else</span> {
+    <span class="cm">// 增量内容: { delta, modelId }</span>
+    process.stdout.<span class="fn">write</span>(chunk.delta);
+  }
+}
+<span class="cm">// 失败自动切换模型重试，外部 abort 立即终止（不产生僵尸请求）</span></pre>
+
+    <p style="margin-top:10px"><b style="color:#ccc">AbortSignal 取消 &amp; 总超时</b></p>
+    <pre><span class="kw">const</span> ctrl = <span class="kw">new</span> <span class="fn">AbortController</span>();
+<span class="fn">setTimeout</span>(() =&gt; ctrl.<span class="fn">abort</span>(), <span class="nm">60_000</span>); <span class="cm">// 60s 总超时</span>
+
+<span class="kw">try</span> {
+  <span class="kw">const</span> result = <span class="kw">await</span> client.<span class="fn">send</span>(messages, { signal: ctrl.signal });
+} <span class="kw">catch</span> (e) {
+  <span class="kw">if</span> (e.name === <span class="st">'AbortError'</span>) { <span class="cm">/* 被取消或总超时 */</span> }
+  <span class="kw">if</span> (e.code)  { <span class="cm">/* e.code = ErrorCodes.EMPTY_RESPONSE 等 */</span> }
+}
+<span class="cm">// 取消后内部请求也会被 abort，不会产生僵尸请求</span></pre>
+
+    <p style="margin-top:10px"><b style="color:#ccc">统计 &amp; 重置</b></p>
+    <pre><span class="kw">const</span> stats   = client.<span class="fn">getAllModelStats</span>();
+<span class="cm">// [{ modelId, score, stats: { avgMs, successRate, count, recentMin } | null,</span>
+<span class="cm">//    blacklistedUntil, blacklistReason }]</span>
+
+<span class="kw">const</span> pvStats = client.<span class="fn">getAllProviderStats</span>();
+<span class="cm">// [{ provider, models, totalModels, availableModels, totalRequests,</span>
+<span class="cm">//    successRate, weightedAvgMs, isRateLimited, ... }]</span>
+
+client.<span class="fn">resetModel</span>(<span class="st">'meta-llama/...'</span>); <span class="cm">// 重置单个模型统计+解除黑名单</span>
+client.<span class="fn">clearStats</span>();                 <span class="cm">// 清空所有统计和黑名单</span></pre>
+
+    <p style="margin-top:10px"><b style="color:#ccc">可读写属性 &amp; 生命周期</b></p>
+    <pre>client.timeoutMs = <span class="nm">30000</span>;        <span class="cm">// 动态调整单次模型请求超时</span>
+client.freeModels;                <span class="cm">// 只读，当前已加载的模型列表副本</span>
+client.<span class="fn">destroy</span>();                 <span class="cm">// 释放定时器，标记为已销毁</span></pre>
+
+    <p style="margin-top:10px"><b style="color:#ccc">ErrorCodes</b> — 结构化错误码</p>
+    <pre>OpenRouterClient.ErrorCodes.DESTROYED          <span class="cm">// 客户端已销毁</span>
+OpenRouterClient.ErrorCodes.EMPTY_RESPONSE      <span class="cm">// 空响应</span>
+OpenRouterClient.ErrorCodes.NO_AVAILABLE_MODEL  <span class="cm">// 无可用模型</span>
+OpenRouterClient.ErrorCodes.ALL_MODELS_FAILED   <span class="cm">// 所有模型失败</span></pre>
+
+    <a class="help-demo-link" href="openrouter-demo.html" target="_blank">
+      ▶ 打开交互式 Demo（openrouter-demo.html）
+    </a>
+  </div>
+</div>
+
+<div id="statsPanel">
+  <button class="btn-close" id="statsClose">×</button>
+  <h3>模型性能统计（近1小时滑动窗口）</h3>
+  <div class="stats-tabs">
+    <button class="stats-tab active" data-view="model">模型列表</button>
+    <button class="stats-tab" data-view="provider">Provider 分组</button>
+  </div>
+  <div id="statsContent"></div>
+</div>
+
+<script src="openrouter-client.js"></script>
+<script>
+// ── 初始化 Client ──────────────────────────────────────────
+const client = new OpenRouterClient({
+  persistKey: 'or_perf',
+  onModelSwitch: (attempt, max, failedModelId, reason) => {
+    const name = failedModelId.split('/').pop();
+    setStatus('loading', `[${attempt}/${max}] ${name} 失败(${reason.slice(0, 20)})，切换中...`);
+  },
+});
+
+const state = { history: [], isSending: false };
+
+// ── DOM ────────────────────────────────────────────────────
+const $chat         = document.getElementById('chat');
+const $apiKey       = document.getElementById('apiKey');
+const $loadModels   = document.getElementById('loadModels');
+const $modelSelect  = document.getElementById('modelSelect');
+const $timeout      = document.getElementById('timeout');
+const $totalTimeout = document.getElementById('totalTimeout');
+const $sendBtn      = document.getElementById('sendBtn');
+const $userInput    = document.getElementById('userInput');
+const $statusDot    = document.getElementById('statusDot');
+const $statusText   = document.getElementById('statusText');
+const $modelInfo    = document.getElementById('modelInfo');
+const $statsBtn     = document.getElementById('statsBtn');
+const $statsOverlay = document.getElementById('statsOverlay');
+const $statsPanel   = document.getElementById('statsPanel');
+const $statsClose   = document.getElementById('statsClose');
+const $statsContent = document.getElementById('statsContent');
+const $statsTabs    = document.querySelectorAll('.stats-tab');
+const $helpBtn      = document.getElementById('helpBtn');
+const $helpPanel    = document.getElementById('helpPanel');
+const $helpClose    = document.getElementById('helpClose');
+
+let currentStatsView = 'model';
+
+// ── UI helpers ─────────────────────────────────────────────
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+/** Lightweight Markdown → safe HTML renderer (no dependencies). */
+function renderMarkdown(src) {
+  // Escape HTML
+  let s = src.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // Extract fenced code blocks → placeholders
+  const blocks = [];
+  s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    blocks.push(`<pre><code>${code.trimEnd()}</code></pre>`);
+    return `\n%%B${blocks.length - 1}%%\n`;
+  });
+
+  // Extract inline code → placeholders
+  const codes = [];
+  s = s.replace(/`([^`\n]+)`/g, (_, c) => {
+    codes.push(`<code class="md-inline">${c}</code>`);
+    return `%%C${codes.length - 1}%%`;
+  });
+
+  // Split into paragraphs by blank lines
+  const parts = s.split(/\n{2,}/);
+  const out = [];
+
+  for (const para of parts) {
+    const p = para.trim();
+    if (!p) continue;
+
+    // Block placeholder
+    if (/^%%B\d+%%$/.test(p)) { out.push(p); continue; }
+
+    const lines = p.split('\n');
+
+    // Heading (single line)
+    if (lines.length === 1) {
+      const hm = p.match(/^(#{1,4})\s+(.+)$/);
+      if (hm) { out.push(`<h${hm[1].length + 2}>${mdInline(hm[2])}</h${hm[1].length + 2}>`); continue; }
+    }
+
+    // Horizontal rule
+    if (lines.length === 1 && /^[-*_]{3,}\s*$/.test(p)) { out.push('<hr>'); continue; }
+
+    // Blockquote
+    if (lines.every(l => /^&gt;\s?/.test(l) || !l.trim())) {
+      const content = lines.map(l => l.replace(/^&gt;\s?/, '')).join('<br>');
+      out.push(`<blockquote>${mdInline(content)}</blockquote>`);
+      continue;
+    }
+
+    // Unordered list
+    if (lines.every(l => /^\s*[-*]\s+/.test(l) || !l.trim())) {
+      const items = lines.filter(l => l.trim()).map(l => `<li>${mdInline(l.replace(/^\s*[-*]\s+/, ''))}</li>`);
+      out.push(`<ul>${items.join('')}</ul>`);
+      continue;
+    }
+
+    // Ordered list
+    if (lines.every(l => /^\s*\d+\.\s+/.test(l) || !l.trim())) {
+      const items = lines.filter(l => l.trim()).map(l => `<li>${mdInline(l.replace(/^\s*\d+\.\s+/, ''))}</li>`);
+      out.push(`<ol>${items.join('')}</ol>`);
+      continue;
+    }
+
+    // Regular paragraph
+    out.push(`<p>${lines.map(l => mdInline(l)).join('<br>')}</p>`);
+  }
+
+  let html = out.join('\n');
+
+  // Restore placeholders
+  codes.forEach((c, i) => { html = html.replace(`%%C${i}%%`, c); });
+  blocks.forEach((b, i) => { html = html.replace(`%%B${i}%%`, b); });
+  return html;
+}
+
+function mdInline(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/~~(.+?)~~/g, '<del>$1</del>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
+function setStatus(type, text) {
+  $statusDot.className = 'status-dot ' + type;
+  $statusText.textContent = text;
+}
+
+function appendMsg(role, content, meta = '') {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = content;
+  if (meta) {
+    const m = document.createElement('div');
+    m.className = 'msg-meta';
+    m.textContent = meta;
+    div.appendChild(m);
+  }
+  $chat.appendChild(div);
+  $chat.scrollTop = $chat.scrollHeight;
+  return div;
+}
+
+function appendThinking() {
+  const div = document.createElement('div');
+  div.className = 'msg assistant thinking';
+  div.textContent = '思考中';
+  $chat.appendChild(div);
+  $chat.scrollTop = $chat.scrollHeight;
+  return div;
+}
+
+function updateModelInfo() {
+  const all = client.getAllModelStats();
+  const available   = all.filter(x => !x.blacklistedUntil);
+  const blacklisted = all.filter(x => x.blacklistedUntil).map(x => x.modelId.split('/').pop());
+
+  const fastest = available
+    .filter(x => x.stats?.avgMs != null)
+    .sort((a, b) => a.stats.avgMs - b.stats.avgMs)[0];
+
+  const fastestHtml = fastest
+    ? `<span>最快: <span class="speed-badge">${esc(fastest.modelId.split('/').pop())} ${(fastest.stats.avgMs / 1000).toFixed(1)}s</span></span>`
+    : '';
+
+  $modelInfo.innerHTML =
+    `<span>可用: <b style="color:#4caf50">${available.length}</b>/${client.freeModels.length}</span>` +
+    fastestHtml +
+    (blacklisted.length
+      ? `<span>屏蔽: ${blacklisted.map(n => `<span class="blacklist-badge">${esc(n)}</span>`).join('')}</span>`
+      : '');
+}
+
+// ── 加载模型 ───────────────────────────────────────────────
+async function loadFreeModels() {
+  const key = $apiKey.value.trim();
+  if (!key) { alert('请先填写 API Key'); return; }
+
+  setStatus('loading', '加载模型中...');
+  $loadModels.disabled = true;
+
+  try {
+    const models = await client.loadModels(key);
+
+    $modelSelect.innerHTML = '<option value="auto">🔄 自动（按性能）</option>';
+    models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.id.replace('/', ' / ');
+      $modelSelect.appendChild(opt);
+    });
+
+    setStatus('ok', `${models.length} 个免费模型`);
+    $sendBtn.disabled = false;
+    appendMsg('system', `已加载 ${models.length} 个免费模型，可以开始对话了。`);
+    updateModelInfo();
+  } catch (e) {
+    setStatus('err', '加载失败');
+    appendMsg('system', `加载失败: ${e.message}`);
+  } finally {
+    $loadModels.disabled = false;
+  }
+}
+
+// ── 发送消息（流式 + AbortSignal 总超时）─────────────────────
+async function handleSend() {
+  if (state.isSending) return;
+  const text = $userInput.value.trim();
+  if (!text) return;
+
+  client.timeoutMs = (parseInt($timeout.value) || 20) * 1000;
+  const totalMs = (parseInt($totalTimeout.value) || 60) * 1000;
+  state.isSending = true;
+  $sendBtn.disabled = true;
+  $userInput.value = '';
+  $userInput.style.height = '44px';
+
+  appendMsg('user', text);
+  state.history.push({ role: 'user', content: text });
+
+  setStatus('loading', '请求中...');
+
+  const preferredModelId = $modelSelect.value === 'auto' ? null : $modelSelect.value;
+
+  // AbortController for total timeout (replaces Promise.race)
+  const controller = new AbortController();
+  const totalTimer = setTimeout(() => controller.abort(), totalMs);
+  const t0 = Date.now();
+
+  // Create streaming message bubble
+  const msgDiv = document.createElement('div');
+  msgDiv.className = 'msg assistant streaming';
+  $chat.appendChild(msgDiv);
+  $chat.scrollTop = $chat.scrollHeight;
+
+  let fullContent = '', usedModelId = '', elapsed = 0;
+
+  try {
+    for await (const chunk of client.sendStream(state.history, {
+      preferredModelId, signal: controller.signal,
+    })) {
+      if (chunk.done) {
+        usedModelId = chunk.modelId;
+        elapsed = chunk.elapsedMs;
+      } else {
+        fullContent += chunk.delta;
+        msgDiv.textContent = fullContent;
+        $chat.scrollTop = $chat.scrollHeight;
+      }
+    }
+    clearTimeout(totalTimer);
+    msgDiv.classList.remove('streaming');
+    msgDiv.classList.add('md-rendered');
+    msgDiv.innerHTML = renderMarkdown(fullContent);
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    meta.textContent = `${usedModelId.split('/').pop()} · ${(elapsed / 1000).toFixed(1)}s`;
+    msgDiv.appendChild(meta);
+    state.history.push({ role: 'assistant', content: fullContent });
+    setStatus('ok', `完成 (${(elapsed / 1000).toFixed(1)}s)`);
+    updateModelInfo();
+  } catch (e) {
+    clearTimeout(totalTimer);
+    msgDiv.remove();
+    if (e.name === 'AbortError') {
+      const waited = ((Date.now() - t0) / 1000).toFixed(0);
+      appendMsg('system', `请求超时：已等待 ${waited}s，未能在总超时限制内获得回复。可尝试增大「总计(s)」或稍后重试。`);
+      setStatus('err', `总超时 (${waited}s)`);
+    } else {
+      appendMsg('system', `请求失败: ${e.message}`);
+      setStatus('err', '请求失败');
+    }
+    state.history.pop();
+  } finally {
+    state.isSending = false;
+    $sendBtn.disabled = false;
+    $userInput.focus();
+  }
+}
+
+// ── 统计面板：模型列表视图 ─────────────────────────────────
+function renderModelView() {
+  const now  = Date.now();
+  const RL   = OpenRouterClient.RATE_LIMIT_EST;
+  const rows = client.getAllModelStats().sort((a, b) => {
+    if (a.stats && !b.stats) return -1;
+    if (!a.stats && b.stats) return 1;
+    return b.score - a.score;
+  });
+  const maxScore = Math.max(...rows.filter(r => r.stats).map(r => r.score), 0.001);
+
+  let html = `<table class="stats-table">
+    <thead><tr>
+      <th>模型</th><th>请求数</th><th>平均响应</th><th>成功率</th>
+      <th title="近1分钟请求数 / 预估上限${RL}">速率/min</th><th>综合评分</th><th>状态</th>
+    </tr></thead><tbody>`;
+
+  for (const { modelId, stats, score, blacklistedUntil } of rows) {
+    const name       = modelId.split('/').pop();
+    const statusCell = blacklistedUntil
+      ? `<span style="color:#f44336">冷却 ${Math.ceil((blacklistedUntil - now) / 1000)}s</span>`
+      : `<span style="color:#4caf50">可用</span>`;
+
+    if (!stats) {
+      html += `<tr><td style="color:#ccc">${esc(name)}</td><td colspan="5" style="color:#3a3a3a">暂无数据</td><td>${statusCell}</td></tr>`;
+      continue;
+    }
+
+    const avgStr  = stats.avgMs != null ? `${(stats.avgMs / 1000).toFixed(2)}s` : '-';
+    const pct     = `${(stats.successRate * 100).toFixed(0)}%`;
+    const srColor = stats.successRate > 0.8 ? '#4caf50' : stats.successRate > 0.5 ? '#ff9800' : '#f44336';
+    const fill    = stats.recentMin / RL;
+    const pColor  = fill >= 0.8 ? '#f44336' : fill >= 0.5 ? '#ff9800' : '#4caf50';
+    const barW    = Math.round((score / maxScore) * 90);
+
+    html += `<tr>
+      <td style="color:#ccc">${esc(name)}</td>
+      <td style="color:#777">${stats.count}</td>
+      <td style="color:#4a9eff">${avgStr}</td>
+      <td style="color:${srColor}">${pct}</td>
+      <td style="color:${pColor}">${stats.recentMin}/${RL}</td>
+      <td><div class="score-bar-wrap">
+        <span class="score-bar" style="width:${barW}px"></span>
+        <span style="color:#555;font-size:11px">${score.toFixed(2)}</span>
+      </div></td>
+      <td>${statusCell}</td>
+    </tr>`;
+  }
+
+  html += `</tbody></table>`;
+
+  const hotProviders = client.getAllProviderStats()
+    .filter(p => p.isRateLimited)
+    .map(p => `${esc(p.provider)}（${Math.ceil(p.rateLimitCooldownMs / 1000)}s后恢复）`);
+  if (hotProviders.length) {
+    html += `<div style="margin-top:8px;font-size:11px;color:#f44336">⚠ Provider 限速冷却中：${hotProviders.join('、')}</div>`;
+  }
+
+  html += `<div class="stats-note">评分 = 成功率(时间衰减加权) × 速度加成(基准2s,上限3×) × 速率余量(≥80%惩罚) × provider惩罚(429后90s内0.15×) + UCB探索奖励(鼓励尝试低采样模型)。</div>`;
+  return html;
+}
+
+// ── 统计面板：Provider 分组视图 ────────────────────────────
+function renderProviderView() {
+  const now      = Date.now();
+  const RL       = OpenRouterClient.RATE_LIMIT_EST;
+  const providers = client.getAllProviderStats().sort((a, b) => b.bestScore - a.bestScore);
+  const globalMaxScore = Math.max(...providers.flatMap(p => p.models.map(x => x.score)), 0.001);
+
+  let html = `<table class="stats-table">
+    <thead><tr>
+      <th>Provider / 模型</th><th>请求数</th><th>加权响应</th><th>成功率</th>
+      <th>速率/min</th><th>状态</th>
+    </tr></thead><tbody>`;
+
+  for (const pv of providers) {
+    const pvAvg  = pv.weightedAvgMs != null ? `${(pv.weightedAvgMs / 1000).toFixed(2)}s` : '-';
+    const pvSr   = pv.successRate   != null ? `${(pv.successRate * 100).toFixed(0)}%` : '-';
+    const pvSrC  = pv.successRate == null ? '#555' : pv.successRate > 0.8 ? '#4caf50' : pv.successRate > 0.5 ? '#ff9800' : '#f44336';
+    const rlCap  = RL * pv.totalModels;
+    const pvFill = pv.totalRecentMin / rlCap;
+    const pvPC   = pvFill >= 0.8 ? '#f44336' : pvFill >= 0.5 ? '#ff9800' : '#555';
+    const pvStT  = pv.isRateLimited ? `⚠ 限速 ${Math.ceil(pv.rateLimitCooldownMs / 1000)}s`
+      : pv.availableModels === 0 ? '全部冷却' : `可用 ${pv.availableModels}/${pv.totalModels}`;
+    const pvStC  = pv.isRateLimited ? '#f44336' : pv.availableModels === 0 ? '#ff9800' : '#4caf50';
+
+    html += `<tr class="provider-hdr">
+      <td>${esc(pv.provider)} <span style="font-size:10px;color:#555;font-weight:normal">${pv.totalModels} 个模型</span></td>
+      <td style="color:#777">${pv.totalRequests || '-'}</td>
+      <td style="color:#4a9eff">${pvAvg}</td>
+      <td style="color:${pvSrC}">${pvSr}</td>
+      <td style="color:${pvPC}">${pv.totalRecentMin}/${rlCap}</td>
+      <td style="color:${pvStC}">${pvStT}</td>
+    </tr>`;
+
+    for (const { modelId, stats, score, blacklistedUntil } of [...pv.models].sort((a, b) => b.score - a.score)) {
+      const name  = modelId.split('/').pop();
+      const mStT  = blacklistedUntil ? `冷却 ${Math.ceil((blacklistedUntil - now) / 1000)}s` : '可用';
+      const mStC  = blacklistedUntil ? '#f44336' : '#4caf50';
+
+      if (!stats) {
+        html += `<tr class="model-sub"><td style="color:#444">${esc(name)}</td><td colspan="4" style="color:#2a2a2a">暂无数据</td><td style="color:${mStC}">${mStT}</td></tr>`;
+        continue;
+      }
+
+      const barW  = Math.round((score / globalMaxScore) * 50);
+      const mAvg  = stats.avgMs != null ? `${(stats.avgMs / 1000).toFixed(2)}s` : '-';
+      const mSr   = `${(stats.successRate * 100).toFixed(0)}%`;
+      const mSrC  = stats.successRate > 0.8 ? '#4caf50' : stats.successRate > 0.5 ? '#ff9800' : '#f44336';
+      const mFill = stats.recentMin / RL;
+      const mPC   = mFill >= 0.8 ? '#f44336' : mFill >= 0.5 ? '#ff9800' : '#555';
+
+      html += `<tr class="model-sub">
+        <td style="color:#777">${esc(name)}
+          <span style="display:inline-block;height:3px;width:${barW}px;background:#2a4060;border-radius:2px;vertical-align:middle;margin-left:4px"></span>
+        </td>
+        <td style="color:#555">${stats.count}</td>
+        <td style="color:#3a7abf">${mAvg}</td>
+        <td style="color:${mSrC}">${mSr}</td>
+        <td style="color:${mPC}">${stats.recentMin}/${RL}</td>
+        <td style="color:${mStC}">${mStT}</td>
+      </tr>`;
+    }
+  }
+
+  html += `</tbody></table>
+    <div class="stats-note">Provider 行为聚合统计（请求数加权）；⚠ 限速中 = 90s 内触发过 429，该 provider 所有模型评分降至 0.15×。</div>`;
+  return html;
+}
+
+function renderStats() {
+  $statsContent.innerHTML = currentStatsView === 'provider'
+    ? renderProviderView() : renderModelView();
+}
+
+function showStats() { renderStats(); $statsOverlay.style.display = 'block'; $statsPanel.style.display = 'block'; }
+function hideStats() { $statsOverlay.style.display = 'none';  $statsPanel.style.display = 'none'; }
+
+function showHelp() { $statsOverlay.style.display = 'block'; $helpPanel.style.display = 'block'; }
+function hideHelp() { $statsOverlay.style.display = 'none';  $helpPanel.style.display = 'none'; }
+
+// ── 事件绑定 ───────────────────────────────────────────────
+$loadModels.addEventListener('click', loadFreeModels);
+$sendBtn.addEventListener('click', handleSend);
+$statsBtn.addEventListener('click', showStats);
+$statsClose.addEventListener('click', hideStats);
+$helpBtn.addEventListener('click', showHelp);
+$helpClose.addEventListener('click', hideHelp);
+$statsOverlay.addEventListener('click', () => { hideStats(); hideHelp(); });
+
+$statsTabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    currentStatsView = tab.dataset.view;
+    $statsTabs.forEach(t => t.classList.toggle('active', t === tab));
+    renderStats();
+  });
+});
+
+$userInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!$sendBtn.disabled) handleSend(); }
+});
+$userInput.addEventListener('input', () => {
+  $userInput.style.height = '44px';
+  $userInput.style.height = Math.min($userInput.scrollHeight, 120) + 'px';
+});
+
+const savedKey = localStorage.getItem('or_apikey');
+if (savedKey) $apiKey.value = savedKey;
+$apiKey.addEventListener('change', () => localStorage.setItem('or_apikey', $apiKey.value.trim()));
+</script>
+</body>
+</html>
