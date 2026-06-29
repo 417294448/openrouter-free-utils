@@ -71,6 +71,10 @@
   .msg.md-rendered a:hover { text-decoration: underline; }
   .msg.md-rendered blockquote { border-left: 3px solid #3a3a3a; padding-left: 10px; margin: 0.4em 0; color: #888; }
   .msg.md-rendered hr { border: none; border-top: 1px solid #2a2a2a; margin: 0.6em 0; }
+  .msg.md-rendered table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.92em; display: block; width: max-content; max-width: 100%; overflow-x: auto; }
+  .msg.md-rendered th, .msg.md-rendered td { border: 1px solid #2a2a2a; padding: 5px 10px; text-align: left; }
+  .msg.md-rendered th { background: #222; color: #fff; font-weight: 600; white-space: nowrap; }
+  .msg.md-rendered tbody tr:nth-child(even) td { background: #191919; }
 
   /* ── Stats panel ── */
   #statsOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 100; }
@@ -444,6 +448,21 @@ function renderMarkdown(src) {
       continue;
     }
 
+    // GFM table — may sit at the start of the block or be embedded after a text line
+    let tStart = -1;
+    for (let i = 0; i + 1 < lines.length; i++) {
+      if (lines[i].includes('|') && isTableDelimiter(lines[i + 1])) { tStart = i; break; }
+    }
+    if (tStart >= 0) {
+      if (tStart > 0) out.push(`<p>${lines.slice(0, tStart).map(l => mdInline(l)).join('<br>')}</p>`);
+      let tEnd = tStart + 2;
+      while (tEnd < lines.length && lines[tEnd].includes('|')) tEnd++;
+      out.push(renderTable(lines.slice(tStart, tEnd)));
+      const post = lines.slice(tEnd);
+      if (post.length) out.push(`<p>${post.map(l => mdInline(l)).join('<br>')}</p>`);
+      continue;
+    }
+
     // Regular paragraph
     out.push(`<p>${lines.map(l => mdInline(l)).join('<br>')}</p>`);
   }
@@ -462,6 +481,33 @@ function mdInline(text) {
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/~~(.+?)~~/g, '<del>$1</del>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
+// ── GFM table helpers ──────────────────────────────────────────
+function splitTableRow(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+}
+
+function isTableDelimiter(line) {
+  if (!line.includes('-')) return false;
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every(c => /^:?-+:?$/.test(c));
+}
+
+function renderTable(lines) {
+  const header = splitTableRow(lines[0]);
+  const aligns = splitTableRow(lines[1]).map(c => {
+    const l = c.startsWith(':'), r = c.endsWith(':');
+    return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
+  });
+  const al = i => aligns[i] ? ` style="text-align:${aligns[i]}"` : '';
+  const th = header.map((h, i) => `<th${al(i)}>${mdInline(h)}</th>`).join('');
+  const trs = lines.slice(2).filter(l => l.trim()).map(row => {
+    const cells = splitTableRow(row);
+    const tds = header.map((_, i) => `<td${al(i)}>${mdInline(cells[i] || '')}</td>`).join('');
+    return `<tr>${tds}</tr>`;
+  }).join('');
+  return `<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
 }
 
 function setStatus(type, text) {
