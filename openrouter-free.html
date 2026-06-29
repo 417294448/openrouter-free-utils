@@ -133,7 +133,7 @@
     <button class="btn-secondary" id="loadModels">加载模型</button>
     <select id="modelSelect"><option value="auto">自动（按性能）</option></select>
     <label style="font-size:13px;color:#888">模型(s)</label>
-    <input type="number" id="timeout" value="5" min="1" max="120" />
+    <input type="number" id="timeout" value="20" min="1" max="120" />
     <label style="font-size:13px;color:#888">总计(s)</label>
     <input type="number" id="totalTimeout" value="60" min="1" max="600" style="width:60px" />
     <div class="status-dot" id="statusDot"></div>
@@ -186,7 +186,7 @@
     <h4>超时设置</h4>
     <ul>
       <li><b style="color:#ccc">模型(s)</b>：单次模型请求的超时。超时后该模型进入冷却，自动切换到下一个模型重试。免费模型响应较慢，建议设置 <code>15~30s</code>。</li>
-      <li><b style="color:#ccc">总计(s)</b>：一条用户消息的整体最长等待时间（含所有重试）。超过后立即终止并提示「请求超时」，不再继续切换模型。建议设置为模型超时的 <code>3~5 倍</code>。</li>
+      <li><b style="color:#ccc">总计(s)</b>：<b>开始出字前</b>的最长等待时间（含连接与切换模型）。一旦模型开始流式输出，总超时即停止生效，之后由「模型(s)」静默超时接管，因此<b>正在持续输出的长回答不会被它中断</b>。若超时前一个字都没收到，则提示「请求超时」。建议设置为模型超时的 <code>3~5 倍</code>。</li>
     </ul>
   </div>
 
@@ -576,7 +576,7 @@ async function handleSend() {
   $chat.appendChild(msgDiv);
   $chat.scrollTop = $chat.scrollHeight;
 
-  let fullContent = '', usedModelId = '', elapsed = 0;
+  let fullContent = '', usedModelId = '', elapsed = 0, firstTokenSeen = false;
 
   try {
     for await (const chunk of client.sendStream(state.history, {
@@ -586,6 +586,13 @@ async function handleSend() {
         usedModelId = chunk.modelId;
         elapsed = chunk.elapsedMs;
       } else {
+        // 出字即停总超时：收到首个 token 后关闭总墙钟，之后由模型静默超时(STREAM_STALL_MS)兜底
+        if (!firstTokenSeen) {
+          firstTokenSeen = true;
+          clearTimeout(totalTimer);
+          setStatus('loading', '输出中...');
+        }
+        usedModelId = chunk.modelId;   // 记录当前模型，供中断时的 partial meta 使用
         fullContent += chunk.delta;
         msgDiv.textContent = fullContent;
         $chat.scrollTop = $chat.scrollHeight;
@@ -604,16 +611,32 @@ async function handleSend() {
     updateModelInfo();
   } catch (e) {
     clearTimeout(totalTimer);
-    msgDiv.remove();
-    if (e.name === 'AbortError') {
-      const waited = ((Date.now() - t0) / 1000).toFixed(0);
-      appendMsg('system', `请求超时：已等待 ${waited}s，未能在总超时限制内获得回复。可尝试增大「总计(s)」或稍后重试。`);
-      setStatus('err', `总超时 (${waited}s)`);
+    const waited = ((Date.now() - t0) / 1000).toFixed(0);
+    const isAbort = e.name === 'AbortError';
+    if (fullContent) {
+      // 已有流式输出 → 保留已输出内容，不丢弃
+      msgDiv.classList.remove('streaming');
+      msgDiv.classList.add('md-rendered');
+      msgDiv.innerHTML = renderMarkdown(fullContent);
+      const meta = document.createElement('div');
+      meta.className = 'msg-meta';
+      meta.textContent = `${(usedModelId || '').split('/').pop()} · 已中断`;
+      msgDiv.appendChild(meta);
+      state.history.push({ role: 'assistant', content: fullContent });
+      appendMsg('system', `输出被中断（已等待 ${waited}s，${isAbort ? '触发总超时' : e.message}）。已保留已输出内容，可继续追问或重试。`);
+      setStatus('err', `已中断 (${waited}s)`);
     } else {
-      appendMsg('system', `请求失败: ${e.message}`);
-      setStatus('err', '请求失败');
+      // 一个 token 都没收到 → 回滚本轮
+      msgDiv.remove();
+      state.history.pop();
+      if (isAbort) {
+        appendMsg('system', `请求超时：已等待 ${waited}s，未能在总超时限制内获得回复。可尝试增大「总计(s)」或稍后重试。`);
+        setStatus('err', `总超时 (${waited}s)`);
+      } else {
+        appendMsg('system', `请求失败: ${e.message}`);
+        setStatus('err', '请求失败');
+      }
     }
-    state.history.pop();
   } finally {
     state.isSending = false;
     $sendBtn.disabled = false;
